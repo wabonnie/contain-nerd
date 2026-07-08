@@ -53,7 +53,7 @@ services:
   # ===========================================================================
 
   postgres-auth:
-    image: postgres:16-alpine
+    image: ${REGISTRY:-localhost:5001}/ticketflow/postgres-auth:${TAG:-1.0}
     container_name: tf-postgres-auth
     <<: *restart_policy
     environment:
@@ -62,7 +62,6 @@ services:
       POSTGRES_DB: ${AUTH_DB_NAME:-auth_db}
     volumes:
       - pg_auth_data:/var/lib/postgresql/data
-      - ./databases/auth-init.sql:/docker-entrypoint-initdb.d/auth-init.sql:ro
     networks:
       - backend-net
     healthcheck:
@@ -72,7 +71,7 @@ services:
       retries: 10
 
   postgres-events:
-    image: postgres:16-alpine
+    image: ${REGISTRY:-localhost:5001}/ticketflow/postgres-events:${TAG:-1.0}
     container_name: tf-postgres-events
     <<: *restart_policy
     environment:
@@ -81,7 +80,6 @@ services:
       POSTGRES_DB: ${EVENTS_DB_NAME:-events_db}
     volumes:
       - pg_events_data:/var/lib/postgresql/data
-      - ./databases/events-init.sql:/docker-entrypoint-initdb.d/events-init.sql:ro
     networks:
       - backend-net
     healthcheck:
@@ -91,7 +89,7 @@ services:
       retries: 10
 
   postgres-orders:
-    image: postgres:16-alpine
+    image: ${REGISTRY:-localhost:5001}/ticketflow/postgres-orders:${TAG:-1.0}
     container_name: tf-postgres-orders
     <<: *restart_policy
     environment:
@@ -100,7 +98,6 @@ services:
       POSTGRES_DB: ${ORDERS_DB_NAME:-orders_db}
     volumes:
       - pg_orders_data:/var/lib/postgresql/data
-      - ./databases/orders-init.sql:/docker-entrypoint-initdb.d/orders-init.sql:ro
     networks:
       - backend-net
     healthcheck:
@@ -110,14 +107,13 @@ services:
       retries: 10
 
   mongo-notifications:
-    image: mongo:7
+    image: ${REGISTRY:-localhost:5001}/ticketflow/mongo-notifications:${TAG:-1.0}
     container_name: tf-mongo-notifications
     <<: *restart_policy
     environment:
       MONGO_INITDB_DATABASE: ${NOTIF_DB_NAME:-notifications_db}
     volumes:
       - mongo_data:/data/db
-      - ./databases/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
     networks:
       - backend-net
     healthcheck:

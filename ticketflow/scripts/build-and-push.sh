@@ -24,8 +24,14 @@ done
 echo "==> Build delle immagini (docker compose build)"
 docker compose build
 
+echo "==> Build delle immagini database custom (con init script incluso)"
+for db in postgres-auth postgres-events postgres-orders mongo-notifications; do
+  echo "    build ${REGISTRY}/ticketflow/${db}:${TAG}"
+  docker build -t "${REGISTRY}/ticketflow/${db}:${TAG}" "./databases/${db}"
+done
+
 echo "==> Push sul registry ${REGISTRY}"
-for svc in frontend gateway service-auth service-events service-orders service-notifications; do
+for svc in frontend gateway service-auth service-events service-orders service-notifications postgres-auth postgres-events postgres-orders mongo-notifications; do
   image="${REGISTRY}/ticketflow/${svc}:${TAG}"
   echo "    push ${image}"
   docker push "${image}"
