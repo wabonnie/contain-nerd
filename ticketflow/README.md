@@ -457,3 +457,45 @@ senza alcuna modifica manuale.
 
 _TicketFlow — progetto d'esame a microservizi. Codice pulito, variabili
 d'ambiente per la configurazione, nessuna password nel codice sorgente._
+
+## Deploy via Portainer
+
+In addition to the standard `make up` / `docker compose up` local workflow, this project can be deployed and managed entirely through [Portainer](https://www.portainer.io/) (Community Edition), using a Git-based stack.
+
+### Prerequisites
+
+- Portainer running locally (see `docker run` command in project notes, or your own Portainer setup)
+- All service images built and pushed to the local registry (`make push`)
+- This repository pushed to GitHub
+
+### Why a separate compose file?
+
+`docker-compose.yml` builds images locally from source (`build:` blocks) and bind-mounts database init scripts (`./databases/*.sql`, `./databases/mongo-init.js`). Portainer, when deploying from a Git repository, runs inside its own container and cannot:
+
+- Access build contexts outside what's cloned (fixed by pre-building and pushing images instead)
+- Bind-mount host paths from Portainer's internal storage (Docker Desktop blocks this by default)
+
+To solve this, `portainers-compose.yml` is a Portainer-specific variant that:
+
+1. Uses only `image:` references (no `build:` blocks) — all 10 images (6 app services + 4 database images) are pre-built and pushed to the local registry via `make push`.
+2. Uses **custom database images** (`postgres-auth`, `postgres-events`, `postgres-orders`, `mongo-notifications`) with init scripts baked in at build time via `COPY`, instead of bind-mounting them at runtime. See `databases/postgres-auth/Dockerfile` etc.
+
+### Deploying
+
+1. Build and push all images to the local registry:
+```bash
+   make push
+```
+2. Commit and push this repo to GitHub.
+3. In Portainer: **Stacks → Add stack**
+   - **Build method:** Repository
+   - **Repository URL:** this repo's GitHub URL
+   - **Repository reference:** `refs/heads/main`
+   - **Compose path:** `ticketflow/portainers-compose.yml`
+   - **Environment variables:** paste the contents of your `.env` file (Advanced mode)
+4. Click **Deploy the stack**.
+
+### Known quirks
+
+- **Registry healthcheck must use the container's internal port, not the host-mapped port.** E.g. if `services-compose.yml` maps `5001:5000`, the healthcheck must target `localhost:5000` (internal), not `5001`.
+- **The frontend (nginx) healthcheck must use `127.0.0.1`, not `localhost`.** On Alpine-based images, `localhost` can resolve to `::1` (IPv6) before `127.0.0.1`, and if nginx isn't bound to an IPv6 socket, `wget`/`curl` healthchecks against `localhost` fail with a misleading "connection refused" even though the app is running
