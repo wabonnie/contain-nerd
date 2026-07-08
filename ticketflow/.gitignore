@@ -1,0 +1,24 @@
+# Ambiente
+.env
+*.local
+
+# Node
+node_modules/
+npm-debug.log*
+dist/
+.vite/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Log & temporanei
+*.log
+tmp/
+.DS_Store
+
+# Artefatti di consegna
+*.zip

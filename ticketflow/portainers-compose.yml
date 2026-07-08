@@ -1,0 +1,274 @@
+# =============================================================================
+# TicketFlow — Stack per deploy via Portainer (nessun build context)
+# Richiede immagini gia' presenti nel registry locale (vedi: make push)
+# =============================================================================
+name: ticketflow
+
+# --- Ancore YAML riutilizzabili -------------------------------------------------
+x-restart: &restart_policy
+  restart: unless-stopped
+
+networks:
+  frontend-net:
+    driver: bridge
+  backend-net:
+    driver: bridge
+
+volumes:
+  pg_auth_data:
+  pg_events_data:
+  pg_orders_data:
+  mongo_data:
+  rabbitmq_data:
+
+services:
+
+  # ===========================================================================
+  # INFRASTRUTTURA
+  # ===========================================================================
+
+  # ---- Message broker: RabbitMQ --------------------------------------------
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: tf-rabbitmq
+    <<: *restart_policy
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-guest}
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"       # AMQP
+      - "${RABBITMQ_MGMT_PORT:-15672}:15672" # UI di gestione
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - backend-net
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  # ===========================================================================
+  # DATABASE (uno per servizio)
+  # ===========================================================================
+
+  postgres-auth:
+    image: postgres:16-alpine
+    container_name: tf-postgres-auth
+    <<: *restart_policy
+    environment:
+      POSTGRES_USER: ${AUTH_DB_USER:-auth_user}
+      POSTGRES_PASSWORD: ${AUTH_DB_PASSWORD:-auth_pass}
+      POSTGRES_DB: ${AUTH_DB_NAME:-auth_db}
+    volumes:
+      - pg_auth_data:/var/lib/postgresql/data
+      - ./databases/auth-init.sql:/docker-entrypoint-initdb.d/auth-init.sql:ro
+    networks:
+      - backend-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${AUTH_DB_USER:-auth_user} -d ${AUTH_DB_NAME:-auth_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  postgres-events:
+    image: postgres:16-alpine
+    container_name: tf-postgres-events
+    <<: *restart_policy
+    environment:
+      POSTGRES_USER: ${EVENTS_DB_USER:-events_user}
+      POSTGRES_PASSWORD: ${EVENTS_DB_PASSWORD:-events_pass}
+      POSTGRES_DB: ${EVENTS_DB_NAME:-events_db}
+    volumes:
+      - pg_events_data:/var/lib/postgresql/data
+      - ./databases/events-init.sql:/docker-entrypoint-initdb.d/events-init.sql:ro
+    networks:
+      - backend-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${EVENTS_DB_USER:-events_user} -d ${EVENTS_DB_NAME:-events_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  postgres-orders:
+    image: postgres:16-alpine
+    container_name: tf-postgres-orders
+    <<: *restart_policy
+    environment:
+      POSTGRES_USER: ${ORDERS_DB_USER:-orders_user}
+      POSTGRES_PASSWORD: ${ORDERS_DB_PASSWORD:-orders_pass}
+      POSTGRES_DB: ${ORDERS_DB_NAME:-orders_db}
+    volumes:
+      - pg_orders_data:/var/lib/postgresql/data
+      - ./databases/orders-init.sql:/docker-entrypoint-initdb.d/orders-init.sql:ro
+    networks:
+      - backend-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${ORDERS_DB_USER:-orders_user} -d ${ORDERS_DB_NAME:-orders_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  mongo-notifications:
+    image: mongo:7
+    container_name: tf-mongo-notifications
+    <<: *restart_policy
+    environment:
+      MONGO_INITDB_DATABASE: ${NOTIF_DB_NAME:-notifications_db}
+    volumes:
+      - mongo_data:/data/db
+      - ./databases/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+    networks:
+      - backend-net
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ===========================================================================
+  # MICROSERVIZI (immagini pre-costruite dal registry, nessun build:)
+  # ===========================================================================
+
+  service-auth:
+    image: ${REGISTRY:-localhost:5001}/ticketflow/service-auth:${TAG:-1.0}
+    <<: *restart_policy
+    environment:
+      PORT: 3001
+      DB_HOST: postgres-auth
+      DB_PORT: 5432
+      DB_USER: ${AUTH_DB_USER:-auth_user}
+      DB_PASSWORD: ${AUTH_DB_PASSWORD:-auth_pass}
+      DB_NAME: ${AUTH_DB_NAME:-auth_db}
+      JWT_SECRET: ${JWT_SECRET:-super-secret-change-me}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-2h}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      postgres-auth:
+        condition: service_healthy
+    networks:
+      - backend-net
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3001/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  service-events:
+    image: ${REGISTRY:-localhost:5001}/ticketflow/service-events:${TAG:-1.0}
+    <<: *restart_policy
+    environment:
+      DB_HOST: postgres-events
+      DB_PORT: 5432
+      DB_USER: ${EVENTS_DB_USER:-events_user}
+      DB_PASSWORD: ${EVENTS_DB_PASSWORD:-events_pass}
+      DB_NAME: ${EVENTS_DB_NAME:-events_db}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      postgres-events:
+        condition: service_healthy
+    networks:
+      - backend-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  service-orders:
+    image: ${REGISTRY:-localhost:5001}/ticketflow/service-orders:${TAG:-1.0}
+    <<: *restart_policy
+    environment:
+      DB_HOST: postgres-orders
+      DB_PORT: 5432
+      DB_USER: ${ORDERS_DB_USER:-orders_user}
+      DB_PASSWORD: ${ORDERS_DB_PASSWORD:-orders_pass}
+      DB_NAME: ${ORDERS_DB_NAME:-orders_db}
+      EVENTS_SERVICE_URL: http://service-events:8000
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672/
+      RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE:-ticketflow.events}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      postgres-orders:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      service-events:
+        condition: service_started
+    networks:
+      - backend-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  service-notifications:
+    image: ${REGISTRY:-localhost:5001}/ticketflow/service-notifications:${TAG:-1.0}
+    <<: *restart_policy
+    environment:
+      MONGO_URL: mongodb://mongo-notifications:27017
+      MONGO_DB: ${NOTIF_DB_NAME:-notifications_db}
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672/
+      RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE:-ticketflow.events}
+      RABBITMQ_QUEUE: ${RABBITMQ_QUEUE:-notifications.order-created}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      mongo-notifications:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - backend-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  gateway:
+    image: ${REGISTRY:-localhost:5001}/ticketflow/gateway:${TAG:-1.0}
+    <<: *restart_policy
+    environment:
+      PORT: 8000
+      JWT_SECRET: ${JWT_SECRET:-super-secret-change-me}
+      AUTH_SERVICE_URL: http://service-auth:3001
+      EVENTS_SERVICE_URL: http://service-events:8000
+      ORDERS_SERVICE_URL: http://service-orders:8000
+      NOTIFICATIONS_SERVICE_URL: http://service-notifications:8000
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "${GATEWAY_PORT:-8000}:8000"
+    depends_on:
+      service-auth:
+        condition: service_started
+      service-events:
+        condition: service_started
+      service-orders:
+        condition: service_started
+      service-notifications:
+        condition: service_started
+    networks:
+      - backend-net
+      - frontend-net
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:8000/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  frontend:
+    image: ${REGISTRY:-localhost:5001}/ticketflow/frontend:${TAG:-1.0}
+    <<: *restart_policy
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    depends_on:
+      gateway:
+        condition: service_started
+    networks:
+      - frontend-net
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:80/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5

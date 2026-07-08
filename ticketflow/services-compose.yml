@@ -1,0 +1,45 @@
+name: ticketflow-services
+
+x-restart: &restart_policy
+  restart: unless-stopped
+
+services:
+
+  # ---- Registry Docker locale ----------------------------------------------
+  registry:
+    image: registry:2
+    container_name: tf-registry
+    <<: *restart_policy
+    ports:
+      - "${REGISTRY_PORT:-5001}:5000"
+    volumes:
+      - registry_data:/var/lib/registry
+    networks:
+      - backend-net
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:5000/v2/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # ---- Portainer (monitoraggio dello stack) --------------------------------
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: tf-portainer
+    <<: *restart_policy
+    ports:
+      - "${PORTAINER_PORT:-9000}:9000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+    networks:
+      - backend-net
+
+
+networks:
+  backend-net:
+    driver: bridge
+
+volumes:
+  registry_data:
+  portainer_data:
