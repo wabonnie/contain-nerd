@@ -1,0 +1,76 @@
+# =============================================================================
+# Frontend (React + Vite served by Nginx) + Ingress (Traefik on Rancher Desktop)
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: ticketflow
+spec:
+  selector:
+    app: frontend
+  ports:
+    - port: 80
+      targetPort: 80
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: ticketflow
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+        - name: frontend
+          image: ticketflow/frontend:1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 20
+            periodSeconds: 30
+---
+# Ingress: Rancher Desktop ships Traefik by default.
+# Frontend at http://ticketflow.localhost/ and API at http://ticketflow.localhost/api
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ticketflow
+  namespace: ticketflow
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: ticketflow.localhost
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: gateway
+                port:
+                  number: 8000
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 80

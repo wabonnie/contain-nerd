@@ -1,0 +1,66 @@
+# =============================================================================
+# API Gateway (Node.js + Express)
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+  namespace: ticketflow
+spec:
+  selector:
+    app: gateway
+  ports:
+    - port: 8000
+      targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: ticketflow
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gateway
+  template:
+    metadata:
+      labels:
+        app: gateway
+    spec:
+      containers:
+        - name: gateway
+          image: ticketflow/gateway:1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          env:
+            - name: PORT
+              value: "8000"
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef: { name: ticketflow-secrets, key: JWT_SECRET }
+            - name: AUTH_SERVICE_URL
+              value: http://service-auth:3001
+            - name: EVENTS_SERVICE_URL
+              value: http://service-events:8000
+            - name: ORDERS_SERVICE_URL
+              value: http://service-orders:8000
+            - name: NOTIFICATIONS_SERVICE_URL
+              value: http://service-notifications:8000
+            - name: LOG_LEVEL
+              valueFrom:
+                configMapKeyRef: { name: ticketflow-config, key: LOG_LEVEL }
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 15
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 30
