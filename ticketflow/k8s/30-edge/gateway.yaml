@@ -30,8 +30,8 @@ spec:
     spec:
       containers:
         - name: gateway
-          image: ticketflow/gateway:1.0
-          imagePullPolicy: IfNotPresent
+          image: localhost:5000/ticketflow/gateway:1.0
+          imagePullPolicy: Always   # pulled from the local Docker registry — runtime-agnostic (Docker, containerd, etc.)
           ports:
             - containerPort: 8000
           env:
