@@ -22,3 +22,4 @@ tmp/
 
 # Artefatti di consegna
 *.zip
+k8s-old-registry-backup/
