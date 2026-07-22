@@ -24,3 +24,4 @@ tmp/
 *.zip
 k8s-old-registry-backup/
 k8s-old-port5000-backup/
+k8s-old-noairplay-backup/

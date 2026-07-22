@@ -497,6 +497,7 @@ in **Rancher Desktop**. I manifest si trovano in [`k8s/`](k8s/README.md).
 | `ports:` su gateway/frontend | **Ingress** (Traefik, incluso in Rancher Desktop) | Routing per hostname (`ticketflow.localhost`) invece di porte pubblicate |
 | `depends_on:` | *(nessun equivalente diretto)* | I pod che partono prima del loro DB falliscono il probe e vengono riavviati finché il DB non è pronto — nessuna configurazione necessaria |
 | script di init bind-mountati | **ConfigMap** montate su `/docker-entrypoint-initdb.d` | Stesso path di montaggio usato da Compose |
+| registry Docker locale (già usato da Compose) | Stesso registry, referenziato direttamente in `image:` | Distribuzione immagini indipendente dal runtime (Docker, containerd, ecc.) |
 
 Struttura dei manifest (applicati in ordine):
 
@@ -508,26 +509,71 @@ k8s/
 └── 30-edge/        gateway, frontend, Ingress (Traefik)
 ```
 
-### 1. Build delle immagini nel cluster
+### 1. Build e push delle immagini sul registry locale
 
-Rancher Desktop condivide lo store immagini con il cluster tramite containerd,
-usando `nerdctl` sul namespace `k8s.io` — **nessun registry necessario**:
+Le immagini vengono distribuite tramite il **registry Docker locale** già
+usato dalla parte Compose del progetto (`registry:2`), invece di un trucco
+specifico del runtime del cluster. Questo rende il deployment **portabile su
+qualunque runtime** (Docker Desktop, Rancher Desktop con dockerd o
+containerd, un cluster remoto): qualsiasi runtime in grado di raggiungere il
+registry via HTTP può scaricare le immagini, senza flag di build specifici.
+
+> **Nota per macOS:** la porta **5000** è spesso occupata dal servizio di
+> sistema **AirPlay Receiver** (attivo di default su macOS Monterey e
+> successivi), che risponde su quella porta prima ancora che il registry
+> possa avviarsi, causando errori silenziosi o risposte `403 Forbidden`
+> inattese. Per questo motivo il registry qui è esposto sulla porta **5050**
+> sull'host (`-p 5050:5000`) invece della porta 5000 predefinita. In
+> alternativa, disattiva AirPlay Receiver da *Impostazioni di Sistema →
+> Generali → AirDrop e Handoff* e usa la porta 5000 ovunque.
 
 ```bash
 cd ticketflow
 
-nerdctl --namespace k8s.io build -t ticketflow/service-auth:1.0 ./service-auth
-nerdctl --namespace k8s.io build -t ticketflow/service-events:1.0 ./service-events
-nerdctl --namespace k8s.io build -t ticketflow/service-orders:1.0 ./service-orders
-nerdctl --namespace k8s.io build -t ticketflow/service-notifications:1.0 ./service-notifications
-nerdctl --namespace k8s.io build -t ticketflow/gateway:1.0 ./gateway
-nerdctl --namespace k8s.io build -t ticketflow/frontend:1.0 --build-arg VITE_API_BASE_URL=/api ./frontend
+# Assicurati che il registry sia attivo (già incluso nello stack Compose;
+# in alternativa avvialo a parte):
+docker run -d -p 5050:5000 --restart unless-stopped --name registry registry:2
+
+# Build, tag e push di ogni immagine
+docker build -t localhost:5050/ticketflow/service-auth:1.0 ./service-auth
+docker build -t localhost:5050/ticketflow/service-events:1.0 ./service-events
+docker build -t localhost:5050/ticketflow/service-orders:1.0 ./service-orders
+docker build -t localhost:5050/ticketflow/service-notifications:1.0 ./service-notifications
+docker build -t localhost:5050/ticketflow/gateway:1.0 ./gateway
+docker build -t localhost:5050/ticketflow/frontend:1.0 --build-arg VITE_API_BASE_URL=/api ./frontend
+
+docker push localhost:5050/ticketflow/service-auth:1.0
+docker push localhost:5050/ticketflow/service-events:1.0
+docker push localhost:5050/ticketflow/service-orders:1.0
+docker push localhost:5050/ticketflow/service-notifications:1.0
+docker push localhost:5050/ticketflow/gateway:1.0
+docker push localhost:5050/ticketflow/frontend:1.0
+
+# In alternativa, tutto in un colpo:
+bash scripts/build-and-push.sh
 ```
 
-> Se Rancher Desktop è configurato con il motore **dockerd (moby)** invece di
-> containerd, usa `docker build` con gli stessi tag — i manifest usano
-> `imagePullPolicy: IfNotPresent`, quindi le immagini locali vengono comunque
-> utilizzate direttamente.
+I manifest referenziano `image: localhost:5050/ticketflow/<servizio>:1.0` con
+`imagePullPolicy: Always`, così il cluster scarica sempre la versione
+corrente dal registry, invece di affidarsi a una cache di build locale.
+
+> **Nota sul registry non sicuro:** `localhost:5050` serve in HTTP, non
+> HTTPS. La maggior parte dei runtime container rifiuta di scaricare da un
+> registry non-TLS a meno che non sia dichiarato come fidato. Su Rancher
+> Desktop (k3s/containerd), aggiungi questo contenuto a
+> `/etc/rancher/k3s/registries.yaml` (crealo se non esiste), poi
+> **Troubleshooting → Restart Kubernetes**:
+> ```yaml
+> mirrors:
+>   "localhost:5050":
+>     endpoint:
+>       - "http://localhost:5050"
+> ```
+> Su Docker Desktop / dockerd puro, aggiungi invece `localhost:5050` tra gli
+> **"insecure-registries"** nelle impostazioni del motore Docker, e riavvia
+> Docker. Questo passaggio è specifico del runtime, ma va fatto **una sola
+> volta per ambiente** — dopodiché gli stessi manifest e gli stessi
+> riferimenti `image:` funzionano invariati su qualsiasi runtime.
 
 ### 2. ConfigMap per gli script di init dei database
 
@@ -625,6 +671,25 @@ nerdctl --namespace k8s.io rmi <nome-immagine>:1.0
 
 Istruzioni dettagliate, incluse le variabili d'ambiente/segreti di default e
 le note su `depends_on`/probe, sono in [`k8s/README.md`](k8s/README.md).
+
+### Extra: dashboard di Traefik (debug)
+
+Il Traefik incluso in Rancher Desktop ha la dashboard **abilitata ma non
+instradata** di default (`--api.dashboard=true` senza `--api.insecure=true`),
+quindi `/dashboard/` restituisce 404 finché non si aggiunge la regola di
+routing mancante. Il file `k8s/extras/traefik-dashboard.yaml` la aggiunge,
+esponendola solo sull'entrypoint interno `traefik` (porta 8080) — mai
+sull'entrypoint web pubblico, quindi non influisce in alcun modo
+sull'applicazione TicketFlow:
+
+```bash
+kubectl apply -f k8s/extras/traefik-dashboard.yaml
+
+kubectl -n kube-system port-forward deploy/traefik 9000:8080
+# poi apri http://localhost:9000/dashboard/
+```
+
+Per rimuoverla: `kubectl delete -f k8s/extras/traefik-dashboard.yaml`.
 
 ---
 

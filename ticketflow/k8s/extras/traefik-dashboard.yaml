@@ -1,0 +1,32 @@
+# =============================================================================
+# OPTIONAL — Traefik dashboard access (debugging / demo only)
+# =============================================================================
+# Rancher Desktop's bundled Traefik ships with --api.dashboard=true but
+# WITHOUT --api.insecure=true, so the internal dashboard/API service
+# (api@internal) exists but has no HTTP route pointing to it — hence a 404
+# on /dashboard/ out of the box.
+#
+# This IngressRoute exposes it on Traefik's own "traefik" entrypoint
+# (container port 8080), reachable only via kubectl port-forward — it is
+# NOT exposed on the public web entrypoint (port 80/443), so it does not
+# affect or expose the ticketflow app in any way.
+#
+# Apply:   kubectl apply -f k8s/extras/traefik-dashboard.yaml
+# Access:  kubectl -n kube-system port-forward deploy/traefik 9000:8080
+#          then open http://localhost:9000/dashboard/
+# Remove:  kubectl delete -f k8s/extras/traefik-dashboard.yaml
+# =============================================================================
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: traefik-dashboard
+  namespace: kube-system
+spec:
+  entryPoints:
+    - traefik
+  routes:
+    - match: PathPrefix(`/dashboard`) || PathPrefix(`/api`)
+      kind: Rule
+      services:
+        - name: api@internal
+          kind: TraefikService

@@ -1,0 +1,66 @@
+# =============================================================================
+# service-events (Python + FastAPI + PostgreSQL)
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: service-events
+  namespace: ticketflow
+spec:
+  selector:
+    app: service-events
+  ports:
+    - port: 8000
+      targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: service-events
+  namespace: ticketflow
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: service-events
+  template:
+    metadata:
+      labels:
+        app: service-events
+    spec:
+      containers:
+        - name: service-events
+          image: localhost:5050/ticketflow/service-events:1.0
+          imagePullPolicy: Always   # pulled from the local Docker registry — runtime-agnostic (Docker, containerd, etc.)
+          ports:
+            - containerPort: 8000
+          env:
+            - name: DB_HOST
+              value: postgres-events
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef: { name: ticketflow-secrets, key: EVENTS_DB_USER }
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: ticketflow-secrets, key: EVENTS_DB_PASSWORD }
+            - name: DB_NAME
+              valueFrom:
+                configMapKeyRef: { name: ticketflow-config, key: EVENTS_DB_NAME }
+            - name: LOG_LEVEL
+              valueFrom:
+                configMapKeyRef: { name: ticketflow-config, key: LOG_LEVEL }
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 15
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 30
