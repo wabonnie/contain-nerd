@@ -28,54 +28,63 @@ k8s/
 ## 1. Build and push the images to the local registry
 
 Images are distributed through the project's existing **local Docker registry**
-(`registry:2`, port 5000 — the same one used by `docker-compose.yml` /
-`scripts/build-and-push.sh`), instead of a runtime-specific image store. This
-makes the deployment **portable across container runtimes** (Docker Desktop,
-Rancher Desktop with dockerd or containerd, a remote cluster, ...): any
-runtime that can reach the registry over HTTP can pull the images, with no
-runtime-specific build flags.
+(`registry:2`, exposed on host port **5050**  — the same one used by
+`docker-compose.yml` / `scripts/build-and-push.sh`), instead of a
+runtime-specific image store. This makes the deployment **portable across
+container runtimes** (Docker Desktop, Rancher Desktop with dockerd or
+containerd, a remote cluster, ...): any runtime that can reach the registry
+over HTTP can pull the images, with no runtime-specific build flags.
+
+> **Note for macOS:** port **5000** is frequently occupied by the system's
+> **AirPlay Receiver** service (enabled by default on macOS Monterey and
+> later), which answers on that port before the registry container can bind
+> to it — causing silent failures or an unexpected `403 Forbidden` response.
+> For this reason the registry here is exposed on host port **5050**
+> (`-p 5050:5000`) instead of the default 5000. Alternatively, disable
+> AirPlay Receiver under *System Settings → General → AirDrop & Handoff* and
+> use port 5000 instead throughout.
 
 ```bash
 cd contain-nerd-main   # your project root
 
 # Make sure the registry is running (already part of the Compose stack;
 # start it on its own if needed):
-docker run -d -p 5000:5000 --restart unless-stopped --name registry registry:2
+docker run -d -p 5050:5000 --restart unless-stopped --name registry registry:2
 
 # Build, tag, and push each image
-docker build -t localhost:5000/ticketflow/service-auth:1.0 ./service-auth
-docker build -t localhost:5000/ticketflow/service-events:1.0 ./service-events
-docker build -t localhost:5000/ticketflow/service-orders:1.0 ./service-orders
-docker build -t localhost:5000/ticketflow/service-notifications:1.0 ./service-notifications
-docker build -t localhost:5000/ticketflow/gateway:1.0 ./gateway
-docker build -t localhost:5000/ticketflow/frontend:1.0 --build-arg VITE_API_BASE_URL=/api ./frontend
+docker build -t localhost:5050/ticketflow/service-auth:1.0 ./service-auth
+docker build -t localhost:5050/ticketflow/service-events:1.0 ./service-events
+docker build -t localhost:5050/ticketflow/service-orders:1.0 ./service-orders
+docker build -t localhost:5050/ticketflow/service-notifications:1.0 ./service-notifications
+docker build -t localhost:5050/ticketflow/gateway:1.0 ./gateway
+docker build -t localhost:5050/ticketflow/frontend:1.0 --build-arg VITE_API_BASE_URL=/api ./frontend
 
-docker push localhost:5000/ticketflow/service-auth:1.0
-docker push localhost:5000/ticketflow/service-events:1.0
-docker push localhost:5000/ticketflow/service-orders:1.0
-docker push localhost:5000/ticketflow/service-notifications:1.0
-docker push localhost:5000/ticketflow/gateway:1.0
-docker push localhost:5000/ticketflow/frontend:1.0
+docker push localhost:5050/ticketflow/service-auth:1.0
+docker push localhost:5050/ticketflow/service-events:1.0
+docker push localhost:5050/ticketflow/service-orders:1.0
+docker push localhost:5050/ticketflow/service-notifications:1.0
+docker push localhost:5050/ticketflow/gateway:1.0
+docker push localhost:5050/ticketflow/frontend:1.0
 
 # Or in one go: bash scripts/build-and-push.sh
 ```
 
-The manifests reference `image: localhost:5000/ticketflow/<service>:1.0` with
+The manifests reference `image: localhost:5050/ticketflow/<service>:1.0` with
 `imagePullPolicy: Always`, so the cluster always pulls the current image from
 the registry rather than relying on a local build cache.
 
-> **Insecure registry note:** `localhost:5000` serves plain HTTP, not HTTPS.
+> **Insecure registry note:** `localhost:5050` serves plain HTTP, not HTTPS.
 > Most container runtimes refuse to pull from a non-TLS registry unless told
 > it's trusted. On Rancher Desktop (k3s/containerd), add this to
 > `/etc/rancher/k3s/registries.yaml` (create it if missing), then
 > **Troubleshooting → Restart Kubernetes**:
 > ```yaml
 > mirrors:
->   "localhost:5000":
+>   "localhost:5050":
 >     endpoint:
->       - "http://localhost:5000"
+>       - "http://localhost:5050"
 > ```
-> On plain Docker Desktop / dockerd, add `localhost:5000` under
+> On plain Docker Desktop / dockerd, add `localhost:5050` under
 > `"insecure-registries"` in the Docker Engine daemon settings instead, and
 > restart Docker. This step is runtime-specific, but it only needs to be done
 > **once per environment** — after that, the same manifests and `image:`
@@ -139,7 +148,7 @@ kubectl -n ticketflow port-forward svc/rabbitmq 15672:15672
   (`kubectl -n ticketflow scale deploy/service-events --replicas=3`);
   keep the StatefulSets at 1 replica.
 - **Runtime portability**: images are pulled from the local registry
-  (`localhost:5000`) rather than built directly into a runtime-specific image
+  (`localhost:5050`) rather than built directly into a runtime-specific image
   store (e.g. `nerdctl --namespace k8s.io`). This means the exact same
   manifests work whether the cluster is backed by containerd, dockerd
   (moby), or a different machine entirely — only the one-time insecure

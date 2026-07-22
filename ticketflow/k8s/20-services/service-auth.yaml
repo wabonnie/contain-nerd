@@ -30,7 +30,7 @@ spec:
     spec:
       containers:
         - name: service-auth
-          image: localhost:5000/ticketflow/service-auth:1.0
+          image: localhost:5050/ticketflow/service-auth:1.0
           imagePullPolicy: Always   # pulled from the local Docker registry — runtime-agnostic (Docker, containerd, etc.)
           ports:
             - containerPort: 3001
